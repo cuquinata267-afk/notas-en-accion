@@ -1,4 +1,5 @@
-FROM node:22-alpine AS build
+# Los archivos de Vite pueden servirse desde Nginx en ambas arquitecturas.
+FROM --platform=$BUILDPLATFORM node:22-alpine AS build
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
