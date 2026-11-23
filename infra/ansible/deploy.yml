@@ -5,6 +5,7 @@
   vars:
     ansible_ssh_private_key_file: "{{ lookup('env', 'HOME') }}/.ssh/notes"
     notes_domain: "{{ lookup('env', 'NOTES_DOMAIN') }}"
+    quick_tunnel: "{{ not notes_domain and lookup('env', 'NOTES_QUICK_TUNNEL') | lower == 'true' }}"
     notes_directory: /opt/notas-en-accion
   tasks:
     - name: Esperar la conexión SSH
@@ -49,7 +50,7 @@
           IMAGE_TAG={{ lookup('env', 'IMAGE_TAG') }}
           NOTES_PASSWORD_1={{ lookup('env', 'NOTES_PASSWORD_1') }}
           NOTES_PASSWORD_2={{ lookup('env', 'NOTES_PASSWORD_2') }}
-          NOTES_SECURE_COOKIE={{ 'true' if notes_domain else 'false' }}
+          NOTES_SECURE_COOKIE={{ 'true' if notes_domain or quick_tunnel | bool else 'false' }}
       no_log: true
 
     - name: Descargar las imágenes del commit
@@ -132,6 +133,40 @@
       ansible.builtin.uri:
         url: http://127.0.0.1:8080/api/health
         status_code: 200
+
+    - name: Administrar el túnel de demostración
+      ansible.builtin.shell: |
+        set -eu
+        name=notas-demo-cloudflared
+        existing=$(docker ps -a --filter "name=^/${name}$" --format '{{ '{{.Names}}' }}')
+        {% if quick_tunnel | bool %}
+        if [ -z "$existing" ]; then
+          docker run -d --name "$name" --restart unless-stopped --network host cloudflare/cloudflared:latest tunnel --no-autoupdate --url http://127.0.0.1:8080
+        else
+          docker start "$name"
+        fi
+        {% else %}
+        if [ -n "$existing" ]; then docker rm -f "$name"; fi
+        {% endif %}
+
+    - name: Obtener la URL del túnel actual
+      when: quick_tunnel | bool
+      ansible.builtin.shell: |
+        started=$(docker inspect -f '{{ '{{.State.StartedAt}}' }}' notas-demo-cloudflared) || exit 1
+        docker logs --since "$started" notas-demo-cloudflared 2>&1 | grep -Eo 'https://[a-z0-9-]+\.trycloudflare\.com' | tail -1
+      register: tunnel_url
+      changed_when: false
+      until: tunnel_url.rc == 0 and tunnel_url.stdout | length > 0
+      retries: 20
+      delay: 3
+
+    - name: Pasar la URL al paso de verificación
+      when: quick_tunnel | bool
+      delegate_to: localhost
+      become: false
+      ansible.builtin.lineinfile:
+        path: "{{ lookup('env', 'GITHUB_ENV') }}"
+        line: "TUNNEL_URL={{ tunnel_url.stdout }}"
 
     - name: Configurar el subdominio en Cloudflare
       when: notes_domain | length > 0

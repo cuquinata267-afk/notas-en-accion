@@ -75,6 +75,7 @@ jobs:
       NOTES_PASSWORD_1: ${{ secrets.NOTES_PASSWORD_1 }}
       NOTES_PASSWORD_2: ${{ secrets.NOTES_PASSWORD_2 }}
       NOTES_DOMAIN: ${{ vars.NOTES_DOMAIN }}
+      NOTES_QUICK_TUNNEL: ${{ vars.NOTES_QUICK_TUNNEL }}
       CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_ZONE_ID }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ORIGIN_CERT: ${{ secrets.CLOUDFLARE_ORIGIN_CERT }}
@@ -117,6 +118,8 @@ jobs:
           url="http://$SERVER_IP"
           if [[ -n "$NOTES_DOMAIN" ]]; then
             url="https://$NOTES_DOMAIN"
+          elif [[ -n "${TUNNEL_URL:-}" ]]; then
+            url="$TUNNEL_URL"
           fi
           curl --fail --silent --show-error --retry 8 --retry-all-errors --max-time 15 "$url/" > /dev/null
           curl --fail --silent --show-error --retry 8 --retry-all-errors --max-time 15 "$url/api/health"
