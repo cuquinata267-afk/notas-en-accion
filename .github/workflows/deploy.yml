@@ -1,4 +1,4 @@
-name: Publicar Notas en Acción y desplegar en OCI
+name: Deploy OCI - Notas en Acción
 
 on:
   push:
@@ -17,7 +17,8 @@ jobs:
     uses: ./.github/workflows/tests.yml
 
   publish:
-    if: github.ref == 'refs/heads/main' && vars.DOCKERHUB_USERNAME != ''
+    name: Publicar ${{ matrix.image }}
+    if: github.ref == 'refs/heads/main'
     needs: tests
     runs-on: ubuntu-latest
     strategy:
@@ -28,6 +29,16 @@ jobs:
           - directory: frontend
             image: notas-en-accion-web
     steps:
+      - name: Comprobar configuración de Docker Hub
+        env:
+          DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          if [[ -z "$DOCKERHUB_USERNAME" || -z "$DOCKERHUB_TOKEN" ]]; then
+            echo '::error::Configura DOCKERHUB_USERNAME en Variables y DOCKERHUB_TOKEN en Secrets del repositorio.'
+            exit 1
+          fi
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
@@ -43,6 +54,7 @@ jobs:
           tags: ${{ vars.DOCKERHUB_USERNAME }}/${{ matrix.image }}:${{ github.sha }}
 
   deploy:
+    name: Desplegar en OCI
     if: vars.DEPLOY_ENABLED == 'true'
     needs: publish
     runs-on: ubuntu-latest
