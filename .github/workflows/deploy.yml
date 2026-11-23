@@ -66,10 +66,6 @@ jobs:
       OCI_SHAPE: ${{ vars.OCI_SHAPE || 'VM.Standard.A1.Flex' }}
       OCI_NAMESPACE: ${{ vars.OCI_NAMESPACE }}
       OCI_STATE_BUCKET: ${{ vars.OCI_STATE_BUCKET }}
-      OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
-      OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
-      OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
-      OCI_API_KEY: ${{ secrets.OCI_API_KEY }}
       SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
       SSH_PUBLIC_KEY: ${{ vars.SSH_PUBLIC_KEY }}
       SSH_HOST_PRIVATE_KEY: ${{ secrets.SSH_HOST_PRIVATE_KEY }}
@@ -92,7 +88,13 @@ jobs:
         with:
           terraform_version: '1.12.2'
           terraform_wrapper: false
-      - run: python infra/prepare_ci.py
+      - name: Validar y preparar credenciales OCI y SSH
+        env:
+          OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
+          OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+          OCI_API_KEY: ${{ secrets.OCI_API_KEY }}
+        run: python infra/prepare_ci.py
       - run: terraform -chdir=infra/terraform init -backend-config=backend.hcl
       - run: terraform -chdir=infra/terraform validate
       - run: terraform -chdir=infra/terraform plan -out=deploy.tfplan
