@@ -47,10 +47,12 @@ test('edita el título y el contenido de una nota', async ({ page }) => {
 
 test('marca una tarea y mantiene el progreso al recargar', async ({ page }) => {
   const card = await createNote(page, `Checklist ${Date.now()}`, 'Crear VM\nAbrir la app');
-  await card.getByRole('checkbox', { name: 'Crear VM' }).check();
+  const task = card.getByRole('checkbox', { name: 'Crear VM' });
+  await task.click();
+  await expect(task).toBeChecked();
   await expect(card.getByText('1 de 2 completadas')).toBeVisible();
   await page.reload();
-  await expect(card.getByRole('checkbox', { name: 'Crear VM' })).toBeChecked();
+  await expect(task).toBeChecked();
   await expect(card.getByText('1 de 2 completadas')).toBeVisible();
 });
 
@@ -58,7 +60,7 @@ test('filtra notas con tareas pendientes', async ({ page }) => {
   const suffix = Date.now();
   const pending = await createNote(page, `Pendiente ${suffix}`, 'Revisar código');
   const completed = await createNote(page, `Lista ${suffix}`, 'Hacer push');
-  await completed.getByRole('checkbox', { name: 'Hacer push' }).check();
+  await completed.getByRole('checkbox', { name: 'Hacer push' }).click();
   await expect(completed.getByText('1 de 1 completadas')).toBeVisible();
   await page.getByRole('button', { name: 'Pendientes', exact: true }).click();
   await expect(pending).toBeVisible();

@@ -13,7 +13,7 @@
    git push -u origin dev
    ```
 
-5. En **Actions**, verifica las pruebas de `dev` y la publicación de las dos imágenes desde `main`. Cuando esté lista la configuración de OCI, define la variable `DEPLOY_ENABLED=true` y ejecuta **Publicar Notas en Acción y desplegar en OCI → Run workflow** sobre `main`.
+5. En **Actions**, verifica las pruebas de `dev` y la publicación de las dos imágenes desde `main`. En `dev` verás **Pruebas de Notas en Acción**. Para publicar y desplegar, abre **Deploy OCI - Notas en Acción → Run workflow** y selecciona `main`. El trabajo **Desplegar en OCI** se ejecuta con `DEPLOY_ENABLED=true` después de que pasen las pruebas y se publiquen ambas imágenes.
 
 ## 2. OCI
 
