@@ -1,0 +1,20 @@
+services:
+  backend:
+    image: ${DOCKERHUB_USERNAME:?Falta DOCKERHUB_USERNAME}/notas-en-accion-api:${IMAGE_TAG:?Falta IMAGE_TAG}
+    environment:
+      NOTES_PASSWORD_1: ${NOTES_PASSWORD_1:?Falta NOTES_PASSWORD_1}
+      NOTES_PASSWORD_2: ${NOTES_PASSWORD_2:?Falta NOTES_PASSWORD_2}
+      NOTES_SECURE_COOKIE: ${NOTES_SECURE_COOKIE:-false}
+    volumes:
+      - notes_data:/data
+    restart: unless-stopped
+  frontend:
+    image: ${DOCKERHUB_USERNAME:?Falta DOCKERHUB_USERNAME}/notas-en-accion-web:${IMAGE_TAG:?Falta IMAGE_TAG}
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - '127.0.0.1:8080:80'
+    restart: unless-stopped
+volumes:
+  notes_data:

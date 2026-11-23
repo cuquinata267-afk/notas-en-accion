@@ -1,0 +1,16 @@
+services:
+  backend:
+    build: ./backend
+    environment:
+      NOTES_DEMO: 'true'
+    volumes:
+      - notes_data:/data
+  frontend:
+    build: ./frontend
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - '127.0.0.1:8080:80'
+volumes:
+  notes_data:

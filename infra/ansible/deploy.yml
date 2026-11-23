@@ -1,0 +1,183 @@
+- name: Configurar Ubuntu y desplegar Notas en Acción
+  hosts: notes
+  become: true
+  gather_facts: false
+  vars:
+    ansible_ssh_private_key_file: "{{ lookup('env', 'HOME') }}/.ssh/notes"
+    notes_domain: "{{ lookup('env', 'NOTES_DOMAIN') }}"
+    notes_directory: /opt/notas-en-accion
+  tasks:
+    - name: Esperar la conexión SSH
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+
+    - name: Esperar a cloud-init
+      ansible.builtin.command: cloud-init status --wait
+      changed_when: false
+
+    - name: Instalar Docker, Compose, Git, Nginx e iptables
+      ansible.builtin.apt:
+        name: [docker.io, docker-compose-v2, git, nginx, iptables, ca-certificates]
+        update_cache: true
+        cache_valid_time: 3600
+        state: present
+
+    - name: Habilitar Docker
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: Crear directorio de la aplicación
+      ansible.builtin.file:
+        path: "{{ notes_directory }}"
+        state: directory
+        mode: '0700'
+
+    - name: Copiar Compose de producción
+      ansible.builtin.copy:
+        src: ../../compose.production.yml
+        dest: "{{ notes_directory }}/compose.yml"
+        mode: '0600'
+
+    - name: Configurar la versión y las cuentas
+      ansible.builtin.copy:
+        dest: "{{ notes_directory }}/.env"
+        mode: '0600'
+        content: |
+          DOCKERHUB_USERNAME={{ lookup('env', 'DOCKERHUB_USERNAME') }}
+          IMAGE_TAG={{ lookup('env', 'IMAGE_TAG') }}
+          NOTES_PASSWORD_1={{ lookup('env', 'NOTES_PASSWORD_1') }}
+          NOTES_PASSWORD_2={{ lookup('env', 'NOTES_PASSWORD_2') }}
+          NOTES_SECURE_COOKIE={{ 'true' if notes_domain else 'false' }}
+      no_log: true
+
+    - name: Descargar las imágenes del commit
+      ansible.builtin.command: docker compose pull
+      args:
+        chdir: "{{ notes_directory }}"
+      changed_when: true
+
+    - name: Iniciar aplicación y esperar salud
+      ansible.builtin.command: docker compose up -d --wait --wait-timeout 120
+      args:
+        chdir: "{{ notes_directory }}"
+      changed_when: true
+
+    - name: Abrir HTTP y HTTPS con iptables
+      ansible.builtin.copy:
+        dest: /usr/local/sbin/notas-firewall
+        mode: '0755'
+        content: |
+          #!/bin/sh
+          set -eu
+          iptables -w -N NOTAS_INPUT 2>/dev/null || true
+          iptables -w -C NOTAS_INPUT -p tcp -m multiport --dports 80,443 -j ACCEPT || \
+            iptables -w -A NOTAS_INPUT -p tcp -m multiport --dports 80,443 -j ACCEPT
+          iptables -w -C INPUT -j NOTAS_INPUT || iptables -w -I INPUT 1 -j NOTAS_INPUT
+      notify: Aplicar firewall
+
+    - name: Persistir las reglas después del reinicio
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/notas-firewall.service
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Puertos web de Notas en Acción
+          Before=nginx.service
+          [Service]
+          Type=oneshot
+          RemainAfterExit=yes
+          ExecStart=/usr/local/sbin/notas-firewall
+          [Install]
+          WantedBy=multi-user.target
+      notify: Aplicar firewall
+
+    - name: Crear directorio para TLS
+      ansible.builtin.file:
+        path: /etc/nginx/notas-tls
+        state: directory
+        mode: '0700'
+      when: notes_domain | length > 0
+
+    - name: Instalar certificado y clave de Cloudflare Origin
+      ansible.builtin.copy:
+        dest: "/etc/nginx/notas-tls/{{ item.file }}"
+        content: "{{ lookup('env', item.variable) }}"
+        mode: '0600'
+      loop:
+        - { file: origin.pem, variable: CLOUDFLARE_ORIGIN_CERT }
+        - { file: origin.key, variable: CLOUDFLARE_ORIGIN_KEY }
+      when: notes_domain | length > 0
+      no_log: true
+      notify: Recargar Nginx
+
+    - name: Configurar el proxy web
+      ansible.builtin.template:
+        src: nginx.conf.j2
+        dest: /etc/nginx/sites-enabled/notas
+        mode: '0644'
+      notify: Recargar Nginx
+
+    - name: Quitar la página predeterminada de Nginx
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      notify: Recargar Nginx
+
+    - name: Activar cambios del proxy y firewall
+      ansible.builtin.meta: flush_handlers
+
+    - name: Verificar la API a través del contenedor web
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8080/api/health
+        status_code: 200
+
+    - name: Configurar el subdominio en Cloudflare
+      when: notes_domain | length > 0
+      delegate_to: localhost
+      become: false
+      no_log: true
+      vars:
+        records_url: "https://api.cloudflare.com/client/v4/zones/{{ lookup('env', 'CLOUDFLARE_ZONE_ID') }}/dns_records"
+        cf_headers:
+          Authorization: "Bearer {{ lookup('env', 'CLOUDFLARE_API_TOKEN') }}"
+      block:
+        - name: Buscar el registro A
+          ansible.builtin.uri:
+            url: "{{ records_url }}?type=A&name={{ notes_domain }}"
+            headers: "{{ cf_headers }}"
+          register: records
+
+        - name: Crear o actualizar el registro A con proxy
+          ansible.builtin.uri:
+            url: "{{ records_url }}{{ '/' + records.json.result[0].id if records.json.result else '' }}"
+            method: "{{ 'PUT' if records.json.result else 'POST' }}"
+            headers: "{{ cf_headers }}"
+            body_format: json
+            body:
+              type: A
+              name: "{{ notes_domain }}"
+              content: "{{ inventory_hostname }}"
+              ttl: 1
+              proxied: true
+
+  handlers:
+    - name: Aplicar firewall
+      ansible.builtin.systemd:
+        name: notas-firewall.service
+        daemon_reload: true
+        enabled: true
+        state: restarted
+
+    - name: Validar proxy web
+      listen: Recargar Nginx
+      ansible.builtin.command: nginx -t
+      changed_when: false
+
+    - name: Reiniciar proxy web
+      listen: Recargar Nginx
+      ansible.builtin.service:
+        name: nginx
+        enabled: true
+        state: restarted

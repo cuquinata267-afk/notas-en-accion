@@ -1,0 +1,26 @@
+{% if notes_domain %}
+server {
+    listen 80;
+    server_name {{ notes_domain }};
+    return 301 https://{{ notes_domain }}$request_uri;
+}
+{% endif %}
+
+server {
+{% if notes_domain %}
+    listen 443 ssl;
+    server_name {{ notes_domain }};
+    ssl_certificate /etc/nginx/notas-tls/origin.pem;
+    ssl_certificate_key /etc/nginx/notas-tls/origin.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+{% else %}
+    listen 80 default_server;
+    server_name _;
+{% endif %}
+    add_header X-Content-Type-Options nosniff always;
+    client_max_body_size 64k;
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+    }
+}

@@ -1,0 +1,42 @@
+name: Pruebas de Notas en Acción
+
+on:
+  workflow_call:
+  push:
+    branches: [dev]
+  pull_request:
+    branches: [dev, main]
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements-test.txt
+        working-directory: backend
+      - name: Seis pruebas unitarias y seis de integración
+        run: python -m pytest tests -v
+        working-directory: backend
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+        working-directory: frontend
+      - run: npx playwright install --with-deps chromium
+        working-directory: frontend
+      - run: docker compose up -d --build --wait
+      - name: Seis pruebas E2E en Chromium
+        run: npm run test:e2e
+        working-directory: frontend
+      - if: failure()
+        run: docker compose logs
+      - if: always()
+        run: docker compose down -v

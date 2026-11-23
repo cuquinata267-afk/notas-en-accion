@@ -1,0 +1,109 @@
+name: Publicar Notas en Acción y desplegar en OCI
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: notas-oci-production
+  cancel-in-progress: false
+
+jobs:
+  tests:
+    uses: ./.github/workflows/tests.yml
+
+  publish:
+    if: github.ref == 'refs/heads/main' && vars.DOCKERHUB_USERNAME != ''
+    needs: tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - directory: backend
+            image: notas-en-accion-api
+          - directory: frontend
+            image: notas-en-accion-web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./${{ matrix.directory }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ vars.DOCKERHUB_USERNAME }}/${{ matrix.image }}:${{ github.sha }}
+
+  deploy:
+    if: vars.DEPLOY_ENABLED == 'true'
+    needs: publish
+    runs-on: ubuntu-latest
+    env:
+      OCI_REGION: ${{ vars.OCI_REGION }}
+      OCI_COMPARTMENT_OCID: ${{ vars.OCI_COMPARTMENT_OCID }}
+      OCI_AVAILABILITY_DOMAIN: ${{ vars.OCI_AVAILABILITY_DOMAIN }}
+      OCI_UBUNTU_IMAGE_OCID: ${{ vars.OCI_UBUNTU_IMAGE_OCID }}
+      OCI_SHAPE: ${{ vars.OCI_SHAPE || 'VM.Standard.A1.Flex' }}
+      OCI_NAMESPACE: ${{ vars.OCI_NAMESPACE }}
+      OCI_STATE_BUCKET: ${{ vars.OCI_STATE_BUCKET }}
+      OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
+      OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+      OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+      OCI_API_KEY: ${{ secrets.OCI_API_KEY }}
+      SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+      SSH_PUBLIC_KEY: ${{ vars.SSH_PUBLIC_KEY }}
+      SSH_HOST_PRIVATE_KEY: ${{ secrets.SSH_HOST_PRIVATE_KEY }}
+      SSH_HOST_PUBLIC_KEY: ${{ vars.SSH_HOST_PUBLIC_KEY }}
+      DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
+      IMAGE_TAG: ${{ github.sha }}
+      NOTES_PASSWORD_1: ${{ secrets.NOTES_PASSWORD_1 }}
+      NOTES_PASSWORD_2: ${{ secrets.NOTES_PASSWORD_2 }}
+      NOTES_DOMAIN: ${{ vars.NOTES_DOMAIN }}
+      CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_ZONE_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ORIGIN_CERT: ${{ secrets.CLOUDFLARE_ORIGIN_CERT }}
+      CLOUDFLARE_ORIGIN_KEY: ${{ secrets.CLOUDFLARE_ORIGIN_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.12.2'
+          terraform_wrapper: false
+      - run: python infra/prepare_ci.py
+      - run: terraform -chdir=infra/terraform init -backend-config=backend.hcl
+      - run: terraform -chdir=infra/terraform validate
+      - run: terraform -chdir=infra/terraform plan -out=deploy.tfplan
+      - run: terraform -chdir=infra/terraform apply -auto-approve deploy.tfplan
+      - name: Preparar SSH para Ansible
+        id: vm
+        shell: bash
+        run: |
+          IP=$(terraform -chdir=infra/terraform output -raw public_ip)
+          printf '[notes]\n%s ansible_user=ubuntu\n' "$IP" > infra/ansible/inventory.ini
+          printf '%s %s\n' "$IP" "$SSH_HOST_PUBLIC_KEY" > ~/.ssh/known_hosts
+          printf 'ip=%s\n' "$IP" >> "$GITHUB_OUTPUT"
+      - run: python -m pip install 'ansible-core>=2.17,<2.20'
+      - run: ansible-playbook -i infra/ansible/inventory.ini infra/ansible/deploy.yml
+      - name: Verificar acceso público
+        env:
+          SERVER_IP: ${{ steps.vm.outputs.ip }}
+        shell: bash
+        run: |
+          url="http://$SERVER_IP"
+          if [[ -n "$NOTES_DOMAIN" ]]; then
+            url="https://$NOTES_DOMAIN"
+          fi
+          curl --fail --silent --show-error --retry 8 --retry-all-errors --max-time 15 "$url/" > /dev/null
+          curl --fail --silent --show-error --retry 8 --retry-all-errors --max-time 15 "$url/api/health"
+          printf '\n[Abrir Notas en Acción](%s)\n' "$url" >> "$GITHUB_STEP_SUMMARY"

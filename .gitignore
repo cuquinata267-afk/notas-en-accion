@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.venv/
+.env
+*.db*
+*.pem
+__pycache__/
+.pytest_cache/
+test-results/
+playwright-report/
+.terraform/
+*.tfstate*
+*.tfplan
+*.tfvars*
+backend.hcl
+inventory.ini
