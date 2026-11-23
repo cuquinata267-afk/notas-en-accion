@@ -3,43 +3,48 @@
 ## 1. GitHub y Docker Hub
 
 1. Crea un repositorio vacío en GitHub llamado `notas-en-accion` bajo `cuquinata267-afk`. El código local ya incluye un README. Puedes elegir la visibilidad que te pidan para entregar.
-2. Desde el repositorio local, agrega el remoto nuevo y publica las ramas. Estos comandos suponen que el repo remoto todavía está vacío.
+2. En Docker Hub crea `notas-en-accion-api` y `notas-en-accion-web` bajo tu usuario. Usa repositorios públicos para que la VM pueda descargar las imágenes directamente. Reutiliza el token de publicación del portafolio si tiene permiso de escritura en ambos repositorios.
+3. En el repositorio nuevo abre **Settings → Secrets and variables → Actions**. Crea la variable `DOCKERHUB_USERNAME` y el secreto `DOCKERHUB_TOKEN`. Completa también los valores de la siguiente sección antes de activar `DEPLOY_ENABLED`.
+4. Publica las ramas desde el repositorio local. Estos comandos suponen que `origin` apunta al repo nuevo y que el repo remoto todavía está vacío.
 
    ```powershell
-   git remote add origin https://github.com/cuquinata267-afk/notas-en-accion.git
+   cd D:\ociportafolio\notas-en-accion
    git push -u origin main
    git push -u origin dev
    ```
 
-3. En Docker Hub crea `notas-en-accion-api` y `notas-en-accion-web` bajo tu usuario. Ambos pueden ser públicos para que la VM descargue las imágenes directamente. Usa un token de Docker Hub con permiso de publicación.
-4. En GitHub abre **Settings → Secrets and variables → Actions**. Crea la variable `DOCKERHUB_USERNAME` y el secreto `DOCKERHUB_TOKEN`. Ejecuta el workflow de `main` para verificar las imágenes etiquetadas con el SHA del commit.
+5. En **Actions**, verifica las pruebas de `dev` y la publicación de las dos imágenes desde `main`. Cuando esté lista la configuración de OCI, define la variable `DEPLOY_ENABLED=true` y ejecuta **Publicar Notas en Acción y desplegar en OCI → Run workflow** sobre `main`.
 
 ## 2. OCI
 
-Terraform provisiona una VCN, subred pública, gateway de internet, rutas, reglas de red y una VM Ubuntu 24.04 con IP pública. Este proyecto usa `notas-en-accion/production.tfstate` en el bucket OCI que configures. El bucket debe ser privado y la cuenta de Terraform debe tener permiso sobre él y sobre el compartimento. Esa clave separa el estado del portafolio previo.
+Terraform provisiona una VCN, subred pública, gateway de internet, rutas, reglas de red y una VM Ubuntu 24.04 con IP pública. Puedes reutilizar la cuenta, el compartimento y el bucket privado del portafolio si das al usuario de API los permisos necesarios. El estado de Notas se guarda en `notas-en-accion/production.tfstate` en ese bucket.
 
-Configura el OCID de una imagen de **Ubuntu 24.04** compatible con tu shape y región. `VM.Standard.A1.Flex` usa ARM64 y es el valor predeterminado. Si usas un shape x86 disponible para tu cuenta, selecciona una imagen AMD64 y revisa sus límites y costos antes de activar el despliegue.
+Comprueba el shape y el OCID de la imagen en **Compute → Instances → tu VM del portafolio** si quieres repetir su combinación. El workflow del portafolio puede seleccionar una forma e imagen distintas de las variables iniciales. Notas usa directamente lo que configures en `OCI_SHAPE` y `OCI_UBUNTU_IMAGE_OCID`. `VM.Standard.A1.Flex` usa ARM64. Un shape x86 como `VM.Standard.E5.Flex` requiere Ubuntu 24.04 AMD64. Comprueba el cupo disponible y el costo de la segunda VM antes de activar el despliegue.
 
 | Variables GitHub | Valor |
 | --- | --- |
-| `OCI_REGION`, `OCI_COMPARTMENT_OCID`, `OCI_AVAILABILITY_DOMAIN` | Región, compartimento y nombre completo del availability domain. |
+| `OCI_REGION`, `OCI_COMPARTMENT_OCID`, `OCI_AVAILABILITY_DOMAIN` | Copia los valores del portafolio si usamos la misma región y compartimento. Usa el nombre completo del availability domain. |
 | `OCI_UBUNTU_IMAGE_OCID`, `OCI_SHAPE` | Imagen compatible y shape. El segundo puede omitirse para usar A1 Flex. |
-| `OCI_NAMESPACE`, `OCI_STATE_BUCKET` | Namespace y bucket de Object Storage. |
-| `SSH_PUBLIC_KEY`, `SSH_HOST_PUBLIC_KEY` | Claves públicas de los pares de acceso e identidad del servidor. |
+| `OCI_NAMESPACE`, `OCI_STATE_BUCKET` | Reutiliza el namespace y el nombre de bucket del portafolio. |
+| `SSH_PUBLIC_KEY`, `SSH_HOST_PUBLIC_KEY` | Claves públicas para acceso y para la identidad de la VM nueva. Usa los archivos de la tabla de abajo. |
 | `DEPLOY_ENABLED` | `true` cuando Docker Hub, OCI, SSH y las cuentas estén configurados. |
 
 | Secretos GitHub | Valor |
 | --- | --- |
-| `OCI_USER_OCID`, `OCI_TENANCY_OCID`, `OCI_FINGERPRINT`, `OCI_API_KEY` | Datos de la clave API de OCI y su PEM privado. |
+| `OCI_USER_OCID`, `OCI_TENANCY_OCID`, `OCI_FINGERPRINT`, `OCI_API_KEY` | Reutiliza la configuración de la misma clave de API de OCI y el PEM original asociado. |
 | `SSH_PRIVATE_KEY`, `SSH_HOST_PRIVATE_KEY` | Claves privadas que corresponden a los pares SSH. |
 | `NOTES_PASSWORD_1`, `NOTES_PASSWORD_2` | Contraseñas para `demo1` y `demo2`. Genera dos valores con `python -c "import secrets; print(secrets.token_urlsafe(24))"`. |
 
-Crea dos pares Ed25519 para la automatización, uno de acceso y otro de identidad del servidor. Guarda ambos fuera del repo. Cuando `ssh-keygen` pida una passphrase, pulsa Enter para que el runner pueda usar esas llaves dedicadas. En el runner se comprueba que cada clave privada corresponda a su pública antes de aplicar Terraform. Restringe el acceso al estado remoto porque contiene la configuración sensible de la instancia.
+En este PC se verificó el par de acceso `portfolio_access` y se preparó el par `notas-host` para la identidad de la nueva VM. Copia el contenido completo de cada archivo en el campo que corresponde del repo nuevo.
 
-```powershell
-ssh-keygen -t ed25519 -f "$env:USERPROFILE/.ssh/notas-access"
-ssh-keygen -t ed25519 -f "$env:USERPROFILE/.ssh/notas-host"
-```
+| Campo en GitHub | Tipo | Archivo en este PC |
+| --- | --- | --- |
+| `SSH_PUBLIC_KEY` | Variable | `%USERPROFILE%\.ssh\portfolio_access.pub` |
+| `SSH_PRIVATE_KEY` | Secreto | `%USERPROFILE%\.ssh\portfolio_access` |
+| `SSH_HOST_PUBLIC_KEY` | Variable | `D:\ociportafolio\.tools\notas-ssh\notas-host.pub` |
+| `SSH_HOST_PRIVATE_KEY` | Secreto | `D:\ociportafolio\.tools\notas-ssh\notas-host` |
+
+Los secretos del portafolio se deben cargar en el repo nuevo con los valores originales, desde tus archivos o tu gestor de secretos. GitHub no vuelve a mostrar su contenido guardado. Guarda las privadas fuera del código y conserva el mismo par `notas-host` después de crear la VM. El runner comprueba que cada privada corresponde con su pública antes de aplicar Terraform. Protege el acceso al bucket porque el estado contiene configuración sensible de la instancia.
 
 El pipeline ajusta la regla de SSH al IP del runner. Ansible instala Docker, Compose, Git, Nginx e iptables, y deja el puerto de la app detrás de Nginx. SQLite se conserva en el volumen `notas-en-accion_notes_data` de la VM. El primer arranque crea las tablas y las dos cuentas.
 
