@@ -1,5 +1,6 @@
 """Escribe la configuración privada de OCI y SSH en el runner."""
 
+from hashlib import md5
 import ipaddress
 import json
 import os
@@ -20,7 +21,7 @@ def write_private(path, content):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(descriptor, "w", encoding="utf-8") as file:
+    with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as file:
         file.write(content)
     path.chmod(0o600)
 
@@ -31,6 +32,42 @@ def validate_ssh_pair(private_path, public_key, label):
     expected = public_key.split()[:2]
     if generated.returncode or len(expected) != 2 or generated.stdout.split()[:2] != expected:
         raise SystemExit(f"El par de claves SSH {label} no coincide o la clave privada requiere una passphrase.")
+
+
+def require_oci_field(name, pattern, expected):
+    value = required(name).removeprefix("\ufeff").strip()
+    if not re.fullmatch(pattern, value):
+        raise SystemExit(f"{name} debe contener solo {expected} en una línea. Copia el valor después del signo = en OCI.")
+    return value
+
+
+def prepare_oci_config(home, region):
+    user = require_oci_field(
+        "OCI_USER_OCID", r"ocid1\.user\.[a-z0-9]+\.[a-z0-9.-]*\.[a-zA-Z0-9_-]+", "el OCID del usuario",
+    )
+    tenancy = require_oci_field(
+        "OCI_TENANCY_OCID", r"ocid1\.tenancy\.[a-z0-9]+\.[a-z0-9.-]*\.[a-zA-Z0-9_-]+", "el OCID de la tenencia",
+    )
+    fingerprint = require_oci_field(
+        "OCI_FINGERPRINT", r"[a-fA-F0-9]{2}(?::[a-fA-F0-9]{2}){15}", "la huella de la clave API",
+    ).lower()
+    private_key = required("OCI_API_KEY").removeprefix("\ufeff").strip().replace("\r\n", "\n") + "\n"
+    public_key = subprocess.run(
+        ["openssl", "rsa", "-pubout", "-outform", "DER", "-passin", "pass:"],
+        input=private_key.encode("utf-8"), capture_output=True, timeout=10,
+    )
+    if public_key.returncode:
+        raise SystemExit("OCI_API_KEY debe contener el PEM privado RSA completo de la clave API, sin passphrase.")
+    actual_fingerprint = md5(public_key.stdout, usedforsecurity=False).digest().hex(":")
+    if actual_fingerprint != fingerprint:
+        raise SystemExit("OCI_FINGERPRINT no coincide con OCI_API_KEY. Usa la huella y el PEM de la misma clave API.")
+
+    api_key = home / ".oci" / "notes.pem"
+    write_private(api_key, private_key)
+    write_private(home / ".oci" / "config", "\n".join([
+        "[DEFAULT]", f"user={user}", f"tenancy={tenancy}", f"fingerprint={fingerprint}",
+        f"region={region}", f"key_file={api_key}", "",
+    ]))
 
 
 def main():
@@ -45,6 +82,8 @@ def main():
             required(name)
 
     home = Path.home()
+    region = required("OCI_REGION")
+    prepare_oci_config(home, region)
     ssh_key = home / ".ssh" / "notes"
     host_key = home / ".ssh" / "notes-host"
     host_pem = required("SSH_HOST_PRIVATE_KEY").replace("\r\n", "\n") + "\n"
@@ -57,13 +96,6 @@ def main():
     if not host_public.startswith("ssh-ed25519 "):
         raise SystemExit("SSH_HOST_PUBLIC_KEY debe ser una clave Ed25519.")
 
-    region = required("OCI_REGION")
-    api_key = home / ".oci" / "notes.pem"
-    write_private(api_key, required("OCI_API_KEY") + "\n")
-    write_private(home / ".oci" / "config", "\n".join([
-        "[DEFAULT]", f"user={required('OCI_USER_OCID')}", f"tenancy={required('OCI_TENANCY_OCID')}",
-        f"fingerprint={required('OCI_FINGERPRINT')}", f"region={region}", f"key_file={api_key}", "",
-    ]))
     with urlopen("https://api.ipify.org", timeout=20) as response:
         runner_ip = ipaddress.IPv4Address(response.read().decode().strip())
 

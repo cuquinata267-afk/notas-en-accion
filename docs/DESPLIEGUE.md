@@ -35,6 +35,8 @@ Comprueba el shape y el OCID de la imagen en **Compute → Instances → tu VM d
 | `SSH_PRIVATE_KEY`, `SSH_HOST_PRIVATE_KEY` | Claves privadas que corresponden a los pares SSH. |
 | `NOTES_PASSWORD_1`, `NOTES_PASSWORD_2` | Contraseñas para `demo1` y `demo2`. Genera dos valores con `python -c "import secrets; print(secrets.token_urlsafe(24))"`. |
 
+Copia el valor de cada OCID y del fingerprint después del signo `=` en la vista **Configuration File Preview** de OCI. Usa una línea por secreto. Para `OCI_API_KEY`, pega el contenido completo del PEM RSA privado de esa misma clave. El paso **Validar y preparar credenciales OCI y SSH** verifica el formato y la correspondencia entre la huella y el PEM antes de que Terraform lea el perfil `DEFAULT` del runner.
+
 En este PC se verificó el par de acceso `portfolio_access` y se preparó el par `notas-host` para la identidad de la nueva VM. Copia el contenido completo de cada archivo en el campo que corresponde del repo nuevo.
 
 | Campo en GitHub | Tipo | Archivo en este PC |
